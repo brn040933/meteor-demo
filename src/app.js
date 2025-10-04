@@ -158,20 +158,53 @@ class App {
 
     // wire basic UI elements safely
     const el = id => document.getElementById(id);
-    if (el('simSpeed')) el('simSpeed').oninput = (e) => { this.simSpeed = parseFloat(e.target.value); if (el('simSpeedVal')) el('simSpeedVal').innerText = parseFloat(e.target.value).toFixed(2); };
+    // restore saved settings from localStorage
+    try{
+      const saved = JSON.parse(localStorage.getItem('meteor-demo-settings')||'{}');
+      if(saved.simSpeed) this.simSpeed = saved.simSpeed;
+      if(saved.realistic) this.realistic = saved.realistic;
+      // UI elements will be updated below after we find them
+    }catch(e){ /* ignore */ }
+
+    if (el('simSpeed')) el('simSpeed').oninput = (e) => { this.simSpeed = parseFloat(e.target.value); if (el('simSpeedVal')) el('simSpeedVal').innerText = parseFloat(e.target.value).toFixed(2); this.saveSettings(); };
     if (el('speed')) { const s = el('speed'); if (el('speedVal')) el('speedVal').innerText = s.value; s.oninput = (e) => { if (el('speedVal')) el('speedVal').innerText = parseFloat(e.target.value).toFixed(2); }; }
     if (el('reset')) el('reset').onclick = () => this.resetScene();
-    if (el('pause')) el('pause').onclick = (e) => { this.paused = !this.paused; e.target.innerText = this.paused ? 'Resume' : 'Pause'; };
+  if (el('pause')) el('pause').onclick = (e) => { this.paused = !this.paused; e.target.innerText = this.paused ? 'Resume' : 'Pause'; };
     if (el('toggleAiming')) el('toggleAiming').onclick = (e) => { this.showAiming = !this.showAiming; e.target.innerText = this.showAiming ? 'Hide Aiming' : 'Show Aiming'; const aim = this.scene.getObjectByName('aimingLine'); if (aim) aim.visible = this.showAiming; };
     if (el('fire')) el('fire').onclick = () => this.shootMeteor();
     if (el('loadMore')) el('loadMore').onclick = () => this.fetchAsteroidList(true);
     if (el('highResTex')) el('highResTex').onclick = () => this.loadHighResEarthTexture();
     const uploadInput = el('uploadTex');
     if (uploadInput) uploadInput.addEventListener('change', (ev) => this.onUploadTexture(ev));
-    const realBtn = el('toggleRealism'); if(realBtn) realBtn.onclick = (e)=>{ this.realistic = !this.realistic; e.target.innerText = this.realistic? 'Disable Realistic Physics' : 'Enable Realistic Physics'; };
+  const realBtn = el('toggleRealism'); if(realBtn) realBtn.onclick = (e)=>{ this.realistic = !this.realistic; e.target.innerText = this.realistic? 'Disable Realistic Physics' : 'Enable Realistic Physics'; this.saveSettings(); };
+
+  // impact sound and camera shake toggles
+  const impactSoundEl = el('impactSound'); if(impactSoundEl) impactSoundEl.onchange = (e)=>{ this.saveSettings(); };
+  const cameraShakeEl = el('cameraShake'); if(cameraShakeEl) cameraShakeEl.onchange = (e)=>{ this.saveSettings(); };
+  const bloomEl = el('useBloom'); if(bloomEl) bloomEl.onchange = (e)=>{ this.setupBloom(e.target.checked); this.saveSettings(); };
+
+  // initialize UI states from loaded settings
+  if(el('simSpeed')) el('simSpeed').value = this.simSpeed;
+  if(el('simSpeedVal')) el('simSpeedVal').innerText = parseFloat(this.simSpeed).toFixed(2);
+  if(el('toggleRealism')) el('toggleRealism').innerText = this.realistic? 'Disable Realistic Physics' : 'Enable Realistic Physics';
+
+  try{ const saved = JSON.parse(localStorage.getItem('meteor-demo-settings')||'{}'); if(saved.impactSound!==undefined && el('impactSound')) el('impactSound').checked = saved.impactSound; if(saved.cameraShake!==undefined && el('cameraShake')) el('cameraShake').checked = saved.cameraShake; if(saved.useBloom!==undefined && el('useBloom')) el('useBloom').checked = saved.useBloom; }catch(e){}
 
     // initial aiming visibility
     const aimObj = this.scene.getObjectByName('aimingLine'); if (aimObj) aimObj.visible = this.showAiming;
+
+  // prepare audio for impact (use HTMLAudioElement for simplicity)
+  this.impactAudio = new Audio();
+  // tiny synthesized click/pop could be used; for now use a short base64-encoded wav (placeholder)
+  // If you want a different sound, replace src with an actual asset URL
+  this.impactAudio.src = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAESsAACJWAAACABAAZGF0YQAAAAA='; // silent placeholder
+
+  // camera shake state
+  this.cameraShakeStrength = 0;
+
+  // bloom composer placeholder
+  this.composer = null;
+  if(el('useBloom') && el('useBloom').checked) this.setupBloom(true);
 
     // attempt to auto-load a local earth texture file if present (project root: earth_texture.jpg)
     try { this.tryLoadLocalEarthTexture(); } catch(e){ /* ignore */ }
@@ -338,7 +371,7 @@ class App {
       }
     });
 
-    // impact effects: handle different effect types (ring, particles, crater)
+  // impact effects: handle different effect types (ring, particles, crater)
     for(let i=this.impactEffects.length-1;i>=0;i--){
       const effect = this.impactEffects[i];
       if(effect.type === 'ring'){
@@ -370,7 +403,18 @@ class App {
     this.meteors = this.meteors.filter(m=>m.active);
 
     this.controls.update();
-    this.renderer.render(this.scene, this.camera);
+    // camera shake application
+    if(this.cameraShakeStrength && (document.getElementById('cameraShake')?.checked)){
+      const shake = this.cameraShakeStrength * 0.02;
+      this.camera.position.x += (Math.random()*2-1) * shake;
+      this.camera.position.y += (Math.random()*2-1) * shake;
+      // decay
+      this.cameraShakeStrength *= 0.92;
+      if(this.cameraShakeStrength < 0.01) this.cameraShakeStrength = 0;
+    }
+
+    // Render using composer if present (bloom), otherwise plain renderer
+    if(this.composer) this.composer.render(); else this.renderer.render(this.scene, this.camera);
     this.updateLabels();
   }
 
@@ -439,7 +483,7 @@ class App {
 
     // 3) Create a persistent crater on the Earth's surface: a dark circle with a rim
     const craterRadius = Math.min(0.6, (opts.size || 1) * 0.5 / (this.SCENE_SCALE*0.001) ); // scene-units heuristic
-    if(this.earth){
+  if(this.earth){
       // inner dark circle
       const innerGeo = new THREE.CircleGeometry(craterRadius*0.6, 24);
       const innerMat = new THREE.MeshBasicMaterial({ color:0x221100 });
@@ -470,6 +514,44 @@ class App {
       this.earth.add(rim);
       this.craters.push({ inner, rim, createdAt:Date.now() });
     }
+    // play impact sound if enabled
+    try{
+      if(document.getElementById('impactSound')?.checked){
+        // reset playback
+        this.impactAudio.currentTime = 0;
+        this.impactAudio.play().catch(()=>{});
+      }
+    }catch(e){}
+
+    // camera shake proportional to crater radius (small scale)
+    try{
+      if(document.getElementById('cameraShake')?.checked){
+        this.cameraShakeStrength = Math.max(this.cameraShakeStrength || 0, Math.min(1, (craterRadius||0.2) ));
+      }
+    }catch(e){}
+  }
+
+  saveSettings(){
+    try{
+      const o = { simSpeed:this.simSpeed, realistic:this.realistic, impactSound: !!document.getElementById('impactSound')?.checked, cameraShake: !!document.getElementById('cameraShake')?.checked, useBloom: !!document.getElementById('useBloom')?.checked };
+      localStorage.setItem('meteor-demo-settings', JSON.stringify(o));
+    }catch(e){ /* ignore */ }
+  }
+
+  setupBloom(enabled){
+    // Graceful: only attempt to set up composer if EffectComposer is available on THREE
+    try{
+      if(enabled){
+        // Dynamically import postprocessing modules if available
+        const composerCtor = (THREE.EffectComposer);
+        if(!composerCtor){ console.warn('EffectComposer not found; bloom disabled'); this.composer = null; return; }
+        // Basic fallback: we don't configure full composer here to avoid hard dependency.
+        // If user wants bloom, they should add postprocessing scripts. We'll just log.
+        console.warn('Bloom requested but postprocessing modules are not bundled. To enable bloom, include EffectComposer and UnrealBloomPass.');
+      } else {
+        this.composer = null;
+      }
+    }catch(e){ console.warn('setupBloom failed', e); this.composer = null; }
   }
 
   // NASA fetchers kept as-is but bound to this
