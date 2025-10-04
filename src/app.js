@@ -193,11 +193,9 @@ class App {
     // initial aiming visibility
     const aimObj = this.scene.getObjectByName('aimingLine'); if (aimObj) aimObj.visible = this.showAiming;
 
-  // prepare audio for impact (use HTMLAudioElement for simplicity)
-  this.impactAudio = new Audio();
-  // tiny synthesized click/pop could be used; for now use a short base64-encoded wav (placeholder)
-  // If you want a different sound, replace src with an actual asset URL
-  this.impactAudio.src = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAESsAACJWAAACABAAZGF0YQAAAAA='; // silent placeholder
+  // WebAudio: create AudioContext lazily (browsers require user gesture to start sound)
+  this.audioCtx = null;
+  this._audioResumeAttached = false;
 
   // camera shake state
   this.cameraShakeStrength = 0;
@@ -529,6 +527,66 @@ class App {
         this.cameraShakeStrength = Math.max(this.cameraShakeStrength || 0, Math.min(1, (craterRadius||0.2) ));
       }
     }catch(e){}
+    // play synthesized impact sound using Web Audio API
+    try{
+      if(document.getElementById('impactSound')?.checked){
+        this.ensureAudio();
+        this.playImpactSound(craterRadius || 0.2);
+      }
+    }catch(e){ console.warn('playImpactSound failed', e); }
+  }
+
+  ensureAudio(){
+    if(this.audioCtx) return;
+    try{
+      const C = window.AudioContext || window.webkitAudioContext;
+      if(!C) return;
+      this.audioCtx = new C();
+      // attach resume on first user gesture if needed
+      if(this.audioCtx.state === 'suspended' && !this._audioResumeAttached){
+        const resume = ()=>{ this.audioCtx.resume().catch(()=>{}); window.removeEventListener('pointerdown', resume); window.removeEventListener('keydown', resume); this._audioResumeAttached = false; };
+        window.addEventListener('pointerdown', resume);
+        window.addEventListener('keydown', resume);
+        this._audioResumeAttached = true;
+      }
+    }catch(e){ console.warn('AudioContext init failed', e); }
+  }
+
+  playImpactSound(strength=0.2){
+    if(!this.audioCtx) return;
+    try{
+      const ctx = this.audioCtx;
+      const now = ctx.currentTime;
+      // create a short percussive click: noise burst + tone
+      // tone
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(200 + strength*800, now);
+      gain.gain.setValueAtTime(0.0001, now);
+      gain.gain.exponentialRampToValueAtTime(0.3 * Math.min(1, strength*2), now + 0.005);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.25);
+      osc.connect(gain);
+      // noise burst
+      const bufferSize = 2 * ctx.sampleRate;
+      const noiseBuffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+      const data = noiseBuffer.getChannelData(0);
+      for(let i=0;i<bufferSize;i++) data[i] = (Math.random()*2-1) * (1 - i/bufferSize);
+      const noise = ctx.createBufferSource();
+      noise.buffer = noiseBuffer;
+      const noiseGain = ctx.createGain();
+      noiseGain.gain.setValueAtTime(0.8 * Math.min(1, strength*2), now);
+      noiseGain.gain.exponentialRampToValueAtTime(0.001, now + 0.15);
+      noise.connect(noiseGain);
+      noiseGain.connect(gain);
+
+      // final chain
+      gain.connect(ctx.destination);
+      osc.start(now);
+      noise.start(now);
+      osc.stop(now + 0.25);
+      noise.stop(now + 0.18);
+    }catch(e){ console.warn('impact sound error', e); }
   }
 
   saveSettings(){
