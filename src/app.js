@@ -1,16 +1,17 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-
-class App {
-  constructor() {
-    // Scene objects
-    this.scene = null;
-    this.camera = null;
-    this.renderer = null;
-    this.controls = null;
-
-    // simulation state
-    this.meteors = [];
+    try{
+      const cfg = this.flashConfig || { duration:0.25, intensity:4.0, initialRadius:0.02, scaleRate:3.0 };
+      const flashGeo = new THREE.SphereGeometry(cfg.initialRadius, 8, 8);
+      const flashMat = new THREE.MeshBasicMaterial({ color:0xffeecc, transparent:true, opacity:0.95 });
+      const flashMesh = new THREE.Mesh(flashGeo, flashMat);
+      flashMesh.position.copy(position);
+      this.scene.add(flashMesh);
+      const pl = new THREE.PointLight(0xffeecc, cfg.intensity, Math.max(6, cfg.initialRadius*50));
+      pl.position.copy(position);
+      this.scene.add(pl);
+      this.impactEffects.push({ type:'flash', mesh:flashMesh, light:pl, life:cfg.duration, startLife:cfg.duration, baseIntensity:cfg.intensity, scaleRate:cfg.scaleRate });
+    }catch(e){ /* ignore if any issues */ }
     this.impactEffects = [];
     this.labels = [];
 
@@ -39,6 +40,8 @@ class App {
   this.craters = [];
     // camera framing state for smooth on-spawn framing
     this.cameraFrame = { active: false };
+    // flash visual defaults (duration seconds, base intensity for point light, initial size)
+    this.flashConfig = { duration: 0.25, intensity: 4.0, initialRadius: 0.02, scaleRate: 3.0 };
   }
 
   // Smoothly frame the camera to look at `targetPos` and move camera to `endCamPos` over `durationMs`
