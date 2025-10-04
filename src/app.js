@@ -35,6 +35,8 @@ class App {
     // placeholders
     this.cursor = null;
     this.predictedImpactMarker = null;
+  this.earth = null; // reference to earth mesh so we can attach craters
+  this.craters = [];
     // camera framing state for smooth on-spawn framing
     this.cameraFrame = { active: false };
   }
@@ -93,11 +95,12 @@ class App {
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
 
     // Earth
-    const earthGeo = new THREE.SphereGeometry(this.earthRadius, 32, 32);
-    const earthMat = new THREE.MeshPhongMaterial({ color: 0x2233ff });
-    const earth = new THREE.Mesh(earthGeo, earthMat);
-    this.scene.add(earth);
-    this.createLabel('Earth', new THREE.Vector3(0, this.earthRadius + 0.2, 0));
+  const earthGeo = new THREE.SphereGeometry(this.earthRadius, 32, 32);
+  const earthMat = new THREE.MeshPhongMaterial({ color: 0x2233ff });
+  this.earth = new THREE.Mesh(earthGeo, earthMat);
+  this.earth.name = 'Earth';
+  this.scene.add(this.earth);
+  this.createLabel('Earth', new THREE.Vector3(0, this.earthRadius + 0.2, 0));
 
   // Lighting: ambient + hemisphere + directional (sun) — but we do not add a visible Sun mesh
   this.scene.add(new THREE.AmbientLight(0xffffff, 0.28));
@@ -139,7 +142,7 @@ class App {
     const pMat = new THREE.MeshBasicMaterial({ color: 0xff5500 });
     this.predictedImpactMarker = new THREE.Mesh(pGeo, pMat);
     this.predictedImpactMarker.visible = false;
-    this.scene.add(this.predictedImpactMarker);
+  this.scene.add(this.predictedImpactMarker);
 
     // mouse-follow cursor
     const mcGeo = new THREE.SphereGeometry(0.03, 8, 8);
@@ -246,8 +249,8 @@ class App {
     const volume = (4/3)*Math.PI*Math.pow(size/2,3);
     const mass = density * volume;
     const area = Math.PI * Math.pow(size/2,2);
-  this.scene.add(meteor);
-  const label = this.createLabel(`Meteor (${(size).toFixed(2)} m)`, meteor.position);
+    this.scene.add(meteor);
+    const label = this.createLabel(`Meteor (${(size).toFixed(2)} m)`, meteor.position);
     const physVelocity = dir.clone().multiplyScalar(speed * this.SCENE_SCALE);
     // Convert meters -> scene units. Geometry radius is 1 (1 meter), so to represent
     // a meteor with diameter `size` (meters) we scale by radius = size/2 in meters.
@@ -316,13 +319,18 @@ class App {
       }
       if(r < this.earthRadius + 0.2){
         meteor.active = false;
-        this.createImpact(pos.clone());
+        // compute approximate impact speed (scene units -> meters if physVelocity present)
+        let speedAtImpact = 0;
+        try{
+          speedAtImpact = meteor.physVelocity ? meteor.physVelocity.length() : (meteor.velocity ? meteor.velocity.length()*this.SCENE_SCALE : 0);
+        }catch(e){ speedAtImpact = 0; }
+        // create visual impact (particles + crater) with some context
+        this.createImpact(pos.clone(), { mass: meteor.mass, speed: speedAtImpact, size: meteor.size });
         this.scene.remove(meteor.mesh);
         if(meteor.label && meteor.label.element && meteor.label.element.parentNode) meteor.label.element.parentNode.removeChild(meteor.label.element);
         const li = this.labels.indexOf(meteor.label); if(li!==-1) this.labels.splice(li,1);
         this.impactCount++; const ic = document.getElementById('impactCount'); if(ic) ic.innerText = String(this.impactCount);
         try{
-          let speedAtImpact = meteor.physVelocity ? meteor.physVelocity.length() : (meteor.velocity ? meteor.velocity.length()*this.SCENE_SCALE : 0);
           const ke = 0.5 * (meteor.mass || 1) * speedAtImpact * speedAtImpact;
           const keTons = ke / 4.184e9;
           const ie = document.getElementById('impactEnergy'); if(ie) ie.innerText = `${ke.toExponential(3)} J (~${keTons.toFixed(2)} kt)`;
@@ -330,9 +338,34 @@ class App {
       }
     });
 
-    // impact effects
-    this.impactEffects.forEach(effect=>{ effect.mesh.scale.addScalar(0.05*this.simSpeed); effect.mesh.material.opacity -= 0.02*this.simSpeed; if(effect.mesh.material.opacity <= 0) this.scene.remove(effect.mesh); });
-    this.impactEffects = this.impactEffects.filter(e=>e.mesh.material.opacity>0);
+    // impact effects: handle different effect types (ring, particles, crater)
+    for(let i=this.impactEffects.length-1;i>=0;i--){
+      const effect = this.impactEffects[i];
+      if(effect.type === 'ring'){
+        effect.mesh.scale.addScalar(0.05*this.simSpeed);
+        effect.mesh.material.opacity -= 0.02*this.simSpeed;
+        if(effect.mesh.material.opacity <= 0){ this.scene.remove(effect.mesh); this.impactEffects.splice(i,1); }
+      } else if(effect.type === 'particles'){
+        // update particle positions using stored velocities
+        const dt = 0.02 * this.simSpeed;
+        const posAttr = effect.mesh.geometry.attributes.position;
+        for(let p=0;p<effect.velocities.length;p++){
+          const v = effect.velocities[p];
+          const idx = p*3;
+          posAttr.array[idx] += v.x * dt;
+          posAttr.array[idx+1] += v.y * dt;
+          posAttr.array[idx+2] += v.z * dt;
+          // simple drag
+          v.multiplyScalar(0.98);
+        }
+        posAttr.needsUpdate = true;
+        effect.life -= dt;
+        effect.material.opacity = Math.max(0, effect.life / effect.startLife) * 0.9;
+        if(effect.life <= 0){ this.scene.remove(effect.mesh); this.impactEffects.splice(i,1); }
+      } else if(effect.type === 'crater'){
+        // craters are persistent; nothing to do per-frame for now
+      }
+    }
 
     this.meteors = this.meteors.filter(m=>m.active);
 
@@ -363,16 +396,80 @@ class App {
   }
 
   createImpact(position){
+    // Backwards-compatible signature: allow (position, opts)
+    let opts = {};
+    if(arguments.length>1) opts = arguments[1] || {};
     const normal = position.clone().normalize();
-    const geo = new THREE.RingGeometry(0.1,0.2,32);
-    const mat = new THREE.MeshBasicMaterial({ color:0xff0000, side:THREE.DoubleSide, transparent:true, opacity:0.8 });
-    const ring = new THREE.Mesh(geo, mat);
+
+    // 1) Add a quick expanding ring (brief)
+    const ringGeo = new THREE.RingGeometry(0.05,0.12,32);
+    const ringMat = new THREE.MeshBasicMaterial({ color:0xffcc66, side:THREE.DoubleSide, transparent:true, opacity:0.9, depthWrite:false });
+    const ring = new THREE.Mesh(ringGeo, ringMat);
     const quat = new THREE.Quaternion();
     quat.setFromUnitVectors(new THREE.Vector3(0,1,0), normal);
     ring.quaternion.copy(quat);
-    ring.position.copy(normal.multiplyScalar(this.earthRadius+0.01));
+    ring.position.copy(normal.clone().multiplyScalar(this.earthRadius + 0.001));
+    ring.renderOrder = 999;
     this.scene.add(ring);
-    this.impactEffects.push({ mesh:ring });
+    this.impactEffects.push({ type:'ring', mesh:ring });
+
+    // 2) Particle flash / ejecta
+    const particleCount = 80;
+    const positions = new Float32Array(particleCount*3);
+    const velocities = [];
+    for(let i=0;i<particleCount;i++){
+      // start at impact point
+      positions[i*3] = position.x;
+      positions[i*3+1] = position.y;
+      positions[i*3+2] = position.z;
+      // random velocity biased along normal
+      const dir = new THREE.Vector3((Math.random()-0.5), (Math.random()-0.2), (Math.random()-0.5)).normalize();
+      // bias towards normal hemisphere
+      if(dir.dot(normal) < 0) dir.negate();
+      dir.multiplyScalar(0.5 + Math.random()*1.5);
+      velocities.push(dir);
+    }
+    const pGeo = new THREE.BufferGeometry();
+    pGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    const pMat = new THREE.PointsMaterial({ color:0xffdd99, size:0.03, transparent:true, opacity:0.95, depthWrite:false });
+    const particles = new THREE.Points(pGeo, pMat);
+    particles.position.set(0,0,0);
+    this.scene.add(particles);
+    this.impactEffects.push({ type:'particles', mesh:particles, velocities, life:1.2, startLife:1.2, material:pMat });
+
+    // 3) Create a persistent crater on the Earth's surface: a dark circle with a rim
+    const craterRadius = Math.min(0.6, (opts.size || 1) * 0.5 / (this.SCENE_SCALE*0.001) ); // scene-units heuristic
+    if(this.earth){
+      // inner dark circle
+      const innerGeo = new THREE.CircleGeometry(craterRadius*0.6, 24);
+      const innerMat = new THREE.MeshBasicMaterial({ color:0x221100 });
+      const inner = new THREE.Mesh(innerGeo, innerMat);
+      // rim
+      const rimGeo = new THREE.RingGeometry(craterRadius*0.6, craterRadius, 24);
+      const rimMat = new THREE.MeshBasicMaterial({ color:0x442211 });
+      const rim = new THREE.Mesh(rimGeo, rimMat);
+
+      inner.rotation.x = Math.PI/2;
+      rim.rotation.x = Math.PI/2;
+      inner.name = 'craterInner'; rim.name = 'craterRim';
+
+      // orient to normal
+      const craterQuat = new THREE.Quaternion();
+      craterQuat.setFromUnitVectors(new THREE.Vector3(0,1,0), normal);
+      inner.quaternion.copy(craterQuat);
+      rim.quaternion.copy(craterQuat);
+
+      // position slightly inset into the surface to avoid z-fighting
+      const offset = -0.002;
+      const craterPos = normal.clone().multiplyScalar(this.earthRadius + offset);
+      inner.position.copy(craterPos);
+      rim.position.copy(craterPos);
+
+      // ensure craters rotate with the earth by parenting
+      this.earth.add(inner);
+      this.earth.add(rim);
+      this.craters.push({ inner, rim, createdAt:Date.now() });
+    }
   }
 
   // NASA fetchers kept as-is but bound to this
