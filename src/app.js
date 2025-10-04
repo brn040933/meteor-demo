@@ -393,6 +393,16 @@ class App {
         effect.life -= dt;
         effect.material.opacity = Math.max(0, effect.life / effect.startLife) * 0.9;
         if(effect.life <= 0){ this.scene.remove(effect.mesh); this.impactEffects.splice(i,1); }
+      } else if(effect.type === 'flash'){
+        // brief bright flash: scale mesh and fade light
+        const dt = 0.02 * this.simSpeed;
+        effect.life -= dt;
+        const t = Math.max(0, effect.life / effect.startLife);
+        // scale down as it fades
+        if(effect.mesh) effect.mesh.scale.multiplyScalar(1 + 3*dt);
+        if(effect.light){ effect.light.intensity = Math.max(0, effect.baseIntensity * t); }
+        if(effect.mesh && effect.mesh.material) effect.mesh.material.opacity = Math.max(0, t);
+        if(effect.life <= 0){ if(effect.mesh) this.scene.remove(effect.mesh); if(effect.light) this.scene.remove(effect.light); this.impactEffects.splice(i,1); }
       } else if(effect.type === 'crater'){
         // craters are persistent; nothing to do per-frame for now
       }
@@ -454,6 +464,19 @@ class App {
     ring.renderOrder = 999;
     this.scene.add(ring);
     this.impactEffects.push({ type:'ring', mesh:ring });
+
+    // 1.5) Bright flash (emissive sphere + point light) - very short lived
+    try{
+      const flashGeo = new THREE.SphereGeometry(0.02, 8, 8);
+      const flashMat = new THREE.MeshBasicMaterial({ color:0xffeecc, transparent:true, opacity:0.95 });
+      const flashMesh = new THREE.Mesh(flashGeo, flashMat);
+      flashMesh.position.copy(position);
+      this.scene.add(flashMesh);
+      const pl = new THREE.PointLight(0xffeecc, 4.0, 6);
+      pl.position.copy(position);
+      this.scene.add(pl);
+      this.impactEffects.push({ type:'flash', mesh:flashMesh, light:pl, life:0.25, startLife:0.25, baseIntensity:4.0 });
+    }catch(e){ /* ignore if any issues */ }
 
     // 2) Particle flash / ejecta
     const particleCount = 80;
