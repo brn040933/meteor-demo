@@ -1546,6 +1546,9 @@ class App {
     const dome = new THREE.Mesh(domeGeo, domeMat);
     explosionGroup.add(dome);
     
+    // Create wave-like explosion effect
+    this.createWaveExplosion(position, energy, meteorSize);
+    
     // Create fire particles
     const particleCount = Math.min(100, Math.max(20, kilotons * 10));
     const particles = new THREE.BufferGeometry();
@@ -1604,6 +1607,64 @@ class App {
     if (kilotons > 1) {
       this.createMushroomCloud(position, energy);
     }
+  }
+
+  // Create wave-like explosion effect that spreads outward like ocean waves
+  createWaveExplosion(position, energy, meteorSize = 1000) {
+    const kilotons = energy / 4.184e12;
+    const meteorSizeFactor = Math.max(0.5, Math.min(3.0, Math.log10(meteorSize + 1) / 2));
+    const maxWaveRadius = Math.max(0.5, Math.min(5.0, Math.pow(kilotons, 0.4) * 2 * meteorSizeFactor));
+    
+    // Create multiple wave rings
+    const waveCount = Math.min(5, Math.max(2, Math.floor(kilotons / 0.5) + 1));
+    const waveGroup = new THREE.Group();
+    
+    for (let i = 0; i < waveCount; i++) {
+      const waveDelay = i * 0.3; // Stagger wave creation
+      const waveRadius = 0.1 + (i * 0.2); // Starting radius
+      const waveThickness = 0.05 + (i * 0.02); // Wave thickness
+      
+      // Create wave ring geometry
+      const waveGeo = new THREE.RingGeometry(
+        waveRadius, 
+        waveRadius + waveThickness, 
+        64
+      );
+      
+      // Create wave material with ocean-like colors
+      const waveMat = new THREE.MeshBasicMaterial({
+        color: new THREE.Color().setHSL(0.6, 0.8, 0.3 + i * 0.1), // Blue-green colors
+        transparent: true,
+        opacity: 0.6 - i * 0.1,
+        side: THREE.DoubleSide
+      });
+      
+      const wave = new THREE.Mesh(waveGeo, waveMat);
+      
+      // Position wave on Earth's surface
+      const normal = position.clone().normalize();
+      const quat = new THREE.Quaternion();
+      quat.setFromUnitVectors(new THREE.Vector3(0, 1, 0), normal);
+      wave.quaternion.copy(quat);
+      wave.position.copy(normal.multiplyScalar(this.earthRadius + 0.01));
+      
+      waveGroup.add(wave);
+      
+      // Add wave to explosion effects for animation
+      this.explosionEffects.push({
+        group: waveGroup,
+        wave: wave,
+        lifetime: 4.0 + i * 0.5,
+        maxLifetime: 4.0 + i * 0.5,
+        startTime: Date.now() + waveDelay * 1000,
+        maxRadius: maxWaveRadius,
+        currentRadius: waveRadius,
+        expansionSpeed: 0.5 + i * 0.1,
+        isWave: true
+      });
+    }
+    
+    this.scene.add(waveGroup);
   }
 
   // Create mushroom cloud effect
@@ -1750,6 +1811,42 @@ class App {
         const opacity = (1 - progress) * 0.6;
         effect.stem.material.opacity = opacity;
         effect.cap.material.opacity = opacity;
+      }
+      
+      // Update wave explosion effects
+      if (effect.isWave && effect.wave) {
+        const progress = 1 - (effect.lifetime / effect.maxLifetime);
+        
+        // Expand wave outward
+        effect.currentRadius += effect.expansionSpeed * 0.02 * this.simSpeed;
+        
+        // Update wave geometry with new radius
+        const waveThickness = 0.05 + (effect.currentRadius * 0.02);
+        const newWaveGeo = new THREE.RingGeometry(
+          effect.currentRadius,
+          effect.currentRadius + waveThickness,
+          64
+        );
+        
+        // Replace geometry
+        effect.wave.geometry.dispose();
+        effect.wave.geometry = newWaveGeo;
+        
+        // Fade wave out as it expands
+        const fadeProgress = Math.min(1, effect.currentRadius / effect.maxRadius);
+        effect.wave.material.opacity = (0.6 - fadeProgress * 0.6) * (1 - progress);
+        
+        // Change wave color as it expands (blue to white)
+        const hue = 0.6 - fadeProgress * 0.2; // Blue to cyan
+        const saturation = 0.8 - fadeProgress * 0.3;
+        const lightness = 0.3 + fadeProgress * 0.4;
+        effect.wave.material.color.setHSL(hue, saturation, lightness);
+        
+        // Remove wave if it has expanded too far or lifetime expired
+        if (effect.currentRadius >= effect.maxRadius || effect.lifetime <= 0) {
+          effect.wave.geometry.dispose();
+          effect.wave.material.dispose();
+        }
       }
       
       // Update particles
