@@ -1613,61 +1613,134 @@ class App {
   createWaveExplosion(position, energy, meteorSize = 1000) {
     const kilotons = energy / 4.184e12;
     const meteorSizeFactor = Math.max(0.5, Math.min(3.0, Math.log10(meteorSize + 1) / 2));
-    const maxWaveRadius = Math.max(0.5, Math.min(5.0, Math.pow(kilotons, 0.4) * 2 * meteorSizeFactor));
+    const maxWaveRadius = Math.max(0.8, Math.min(8.0, Math.pow(kilotons, 0.4) * 3 * meteorSizeFactor));
     
-    console.log(`Creating wave explosion: ${kilotons.toFixed(2)} kt, max radius: ${maxWaveRadius.toFixed(2)}`);
+    console.log(`Creating ocean wave explosion: ${kilotons.toFixed(2)} kt, max radius: ${maxWaveRadius.toFixed(2)}`);
     
-    // Create multiple wave rings - always create at least 3 waves
-    const waveCount = Math.min(5, Math.max(3, Math.floor(kilotons / 0.5) + 1));
+    // Create multiple wave rings with realistic ocean wave properties
+    const waveCount = Math.min(8, Math.max(4, Math.floor(kilotons / 0.3) + 2));
     const waveGroup = new THREE.Group();
     
-    console.log(`Creating ${waveCount} waves`);
+    console.log(`Creating ${waveCount} ocean waves`);
     
     for (let i = 0; i < waveCount; i++) {
-      const waveRadius = 0.05 + (i * 0.1); // Starting radius - smaller initial size
-      const waveThickness = 0.03 + (i * 0.01); // Wave thickness
+      const waveDelay = i * 0.2; // Stagger wave creation like real ocean waves
+      const waveRadius = 0.02 + (i * 0.08); // Smaller initial radius
+      const waveThickness = 0.02 + (i * 0.005); // Thinner waves
+      const waveHeight = 0.01 + (i * 0.002); // Wave height for 3D effect
       
-      // Create wave ring geometry
+      // Create wave ring geometry with height
       const waveGeo = new THREE.RingGeometry(
         waveRadius, 
         waveRadius + waveThickness, 
-        64
+        128 // More segments for smoother waves
       );
       
-      // Create wave material with ocean-like colors
+      // Create realistic ocean wave material
       const waveMat = new THREE.MeshBasicMaterial({
-        color: new THREE.Color().setHSL(0.6, 0.8, 0.3 + i * 0.1), // Blue-green colors
+        color: new THREE.Color().setHSL(0.55, 0.9, 0.4 + i * 0.05), // Deep ocean blue
         transparent: true,
-        opacity: 0.8 - i * 0.15, // Higher initial opacity
-        side: THREE.DoubleSide
+        opacity: 0.9 - i * 0.1, // Higher opacity for visibility
+        side: THREE.DoubleSide,
+        alphaTest: 0.1
       });
       
       const wave = new THREE.Mesh(waveGeo, waveMat);
       
-      // Position wave on Earth's surface
+      // Position wave on Earth's surface with slight height offset
       const normal = position.clone().normalize();
       const quat = new THREE.Quaternion();
       quat.setFromUnitVectors(new THREE.Vector3(0, 1, 0), normal);
       wave.quaternion.copy(quat);
-      wave.position.copy(normal.multiplyScalar(this.earthRadius + 0.01));
+      wave.position.copy(normal.multiplyScalar(this.earthRadius + 0.005 + waveHeight));
+      
+      // Add slight rotation for more realistic wave motion
+      wave.rotation.z = Math.random() * 0.1;
       
       waveGroup.add(wave);
       
-      // Add wave to explosion effects for animation - start immediately
+      // Add wave to explosion effects for animation
       this.explosionEffects.push({
         group: waveGroup,
         wave: wave,
-        lifetime: 3.0 + i * 0.3, // Shorter lifetime
-        maxLifetime: 3.0 + i * 0.3,
-        startTime: Date.now(), // Start immediately
+        lifetime: 5.0 + i * 0.4, // Longer lifetime for ocean waves
+        maxLifetime: 5.0 + i * 0.4,
+        startTime: Date.now() + waveDelay * 1000, // Staggered start
         maxRadius: maxWaveRadius,
         currentRadius: waveRadius,
-        expansionSpeed: 0.8 + i * 0.2, // Faster expansion
-        isWave: true
+        expansionSpeed: 0.3 + i * 0.1, // Slower, more realistic expansion
+        waveHeight: waveHeight,
+        isOceanWave: true
       });
     }
     
     this.scene.add(waveGroup);
+    
+    // Add water splash particles for more realistic ocean effect
+    this.createWaterSplash(position, energy, meteorSize);
+  }
+
+  // Create water splash effect for ocean waves
+  createWaterSplash(position, energy, meteorSize = 1000) {
+    const kilotons = energy / 4.184e12;
+    const splashCount = Math.min(50, Math.max(10, kilotons * 20));
+    
+    const splashGroup = new THREE.Group();
+    const splashGeo = new THREE.BufferGeometry();
+    const positions = new Float32Array(splashCount * 3);
+    const velocities = new Float32Array(splashCount * 3);
+    const lifetimes = new Float32Array(splashCount);
+    
+    for (let i = 0; i < splashCount; i++) {
+      const i3 = i * 3;
+      
+      // Random position around impact point
+      const angle = Math.random() * Math.PI * 2;
+      const radius = Math.random() * 0.1;
+      positions[i3] = Math.cos(angle) * radius;
+      positions[i3 + 1] = Math.random() * 0.05; // Height
+      positions[i3 + 2] = Math.sin(angle) * radius;
+      
+      // Random velocity for splash
+      velocities[i3] = (Math.random() - 0.5) * 0.1;
+      velocities[i3 + 1] = Math.random() * 0.05 + 0.02; // Upward
+      velocities[i3 + 2] = (Math.random() - 0.5) * 0.1;
+      
+      lifetimes[i] = 1.0 + Math.random() * 2.0;
+    }
+    
+    splashGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    splashGeo.setAttribute('velocity', new THREE.BufferAttribute(velocities, 3));
+    splashGeo.setAttribute('lifetime', new THREE.BufferAttribute(lifetimes, 1));
+    
+    const splashMat = new THREE.PointsMaterial({
+      color: 0x88ccff, // Light blue water color
+      size: 0.01,
+      transparent: true,
+      opacity: 0.8
+    });
+    
+    const splashSystem = new THREE.Points(splashGeo, splashMat);
+    splashGroup.add(splashSystem);
+    
+    // Position splash group
+    const normal = position.clone().normalize();
+    const quat = new THREE.Quaternion();
+    quat.setFromUnitVectors(new THREE.Vector3(0, 1, 0), normal);
+    splashGroup.quaternion.copy(quat);
+    splashGroup.position.copy(normal.multiplyScalar(this.earthRadius + 0.01));
+    
+    this.scene.add(splashGroup);
+    
+    // Add to explosion effects for animation
+    this.explosionEffects.push({
+      group: splashGroup,
+      particles: splashSystem,
+      lifetime: 3.0,
+      maxLifetime: 3.0,
+      startTime: Date.now(),
+      isWaterSplash: true
+    });
   }
 
   // Create mushroom cloud effect
@@ -1816,39 +1889,44 @@ class App {
         effect.cap.material.opacity = opacity;
       }
       
-      // Update wave explosion effects
-      if (effect.isWave && effect.wave) {
+      // Update ocean wave explosion effects
+      if (effect.isOceanWave && effect.wave) {
         const progress = 1 - (effect.lifetime / effect.maxLifetime);
         
-        // Expand wave outward
-        effect.currentRadius += effect.expansionSpeed * 0.05 * this.simSpeed; // Faster expansion
+        // Expand wave outward with realistic ocean wave speed
+        effect.currentRadius += effect.expansionSpeed * 0.02 * this.simSpeed; // Slower, more realistic
         
-        // Debug: log wave expansion occasionally
-        if (Math.random() < 0.01) {
-          console.log(`Wave expanding: radius ${effect.currentRadius.toFixed(3)}, max ${effect.maxRadius.toFixed(3)}`);
-        }
+        // Add wave oscillation for realistic ocean motion
+        const time = Date.now() * 0.001;
+        effect.wave.rotation.z = Math.sin(time * 2 + effect.currentRadius) * 0.05;
         
         // Update wave geometry with new radius
-        const waveThickness = 0.03 + (effect.currentRadius * 0.01);
+        const waveThickness = 0.02 + (effect.currentRadius * 0.003);
         const newWaveGeo = new THREE.RingGeometry(
           effect.currentRadius,
           effect.currentRadius + waveThickness,
-          64
+          128 // Smoother waves
         );
         
         // Replace geometry
         effect.wave.geometry.dispose();
         effect.wave.geometry = newWaveGeo;
         
-        // Fade wave out as it expands
+        // Realistic ocean wave fading
         const fadeProgress = Math.min(1, effect.currentRadius / effect.maxRadius);
-        effect.wave.material.opacity = (0.8 - fadeProgress * 0.4) * (1 - progress * 0.5);
+        const oceanOpacity = (0.9 - fadeProgress * 0.6) * (1 - progress * 0.3);
+        effect.wave.material.opacity = oceanOpacity;
         
-        // Change wave color as it expands (blue to cyan to white)
-        const hue = 0.6 - fadeProgress * 0.3; // Blue to cyan
-        const saturation = 0.8 - fadeProgress * 0.4;
-        const lightness = 0.3 + fadeProgress * 0.5;
+        // Ocean color transition: deep blue -> turquoise -> light blue -> white
+        const hue = 0.55 - fadeProgress * 0.15; // Deep blue to turquoise
+        const saturation = 0.9 - fadeProgress * 0.4; // High saturation to low
+        const lightness = 0.4 + fadeProgress * 0.4; // Dark to light
         effect.wave.material.color.setHSL(hue, saturation, lightness);
+        
+        // Add wave height variation for 3D effect
+        const heightVariation = Math.sin(time * 3 + effect.currentRadius * 2) * 0.002;
+        const normal = effect.wave.position.clone().normalize();
+        effect.wave.position.copy(normal.multiplyScalar(this.earthRadius + 0.005 + effect.waveHeight + heightVariation));
         
         // Remove wave if it has expanded too far or lifetime expired
         if (effect.currentRadius >= effect.maxRadius || effect.lifetime <= 0) {
@@ -1857,8 +1935,40 @@ class App {
         }
       }
       
-      // Update particles
-      if (effect.particles) {
+      // Update water splash particles
+      if (effect.isWaterSplash && effect.particles) {
+        const positions = effect.particles.geometry.attributes.position.array;
+        const velocities = effect.particles.geometry.attributes.velocity.array;
+        const lifetimes = effect.particles.geometry.attributes.lifetime.array;
+        
+        for (let j = 0; j < positions.length; j += 3) {
+          // Update position
+          positions[j] += velocities[j] * 0.02 * this.simSpeed;
+          positions[j + 1] += velocities[j + 1] * 0.02 * this.simSpeed;
+          positions[j + 2] += velocities[j + 2] * 0.02 * this.simSpeed;
+          
+          // Update lifetime
+          const particleIndex = j / 3;
+          lifetimes[particleIndex] -= 0.02 * this.simSpeed;
+          
+          // Add gravity to water particles
+          velocities[j + 1] -= 0.015 * this.simSpeed; // Stronger gravity for water
+          
+          // Add some randomness to water movement
+          velocities[j] += (Math.random() - 0.5) * 0.001;
+          velocities[j + 2] += (Math.random() - 0.5) * 0.001;
+        }
+        
+        effect.particles.geometry.attributes.position.needsUpdate = true;
+        effect.particles.geometry.attributes.lifetime.needsUpdate = true;
+        
+        // Fade water particles
+        const progress = 1 - (effect.lifetime / effect.maxLifetime);
+        effect.particles.material.opacity = (1 - progress) * 0.8;
+      }
+      
+      // Update regular particles
+      if (effect.particles && !effect.isWaterSplash) {
         const positions = effect.particles.geometry.attributes.position.array;
         const velocities = effect.particles.geometry.attributes.velocity.array;
         const lifetimes = effect.particles.geometry.attributes.lifetime.array;
