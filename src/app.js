@@ -1615,14 +1615,17 @@ class App {
     const meteorSizeFactor = Math.max(0.5, Math.min(3.0, Math.log10(meteorSize + 1) / 2));
     const maxWaveRadius = Math.max(0.5, Math.min(5.0, Math.pow(kilotons, 0.4) * 2 * meteorSizeFactor));
     
-    // Create multiple wave rings
-    const waveCount = Math.min(5, Math.max(2, Math.floor(kilotons / 0.5) + 1));
+    console.log(`Creating wave explosion: ${kilotons.toFixed(2)} kt, max radius: ${maxWaveRadius.toFixed(2)}`);
+    
+    // Create multiple wave rings - always create at least 3 waves
+    const waveCount = Math.min(5, Math.max(3, Math.floor(kilotons / 0.5) + 1));
     const waveGroup = new THREE.Group();
     
+    console.log(`Creating ${waveCount} waves`);
+    
     for (let i = 0; i < waveCount; i++) {
-      const waveDelay = i * 0.3; // Stagger wave creation
-      const waveRadius = 0.1 + (i * 0.2); // Starting radius
-      const waveThickness = 0.05 + (i * 0.02); // Wave thickness
+      const waveRadius = 0.05 + (i * 0.1); // Starting radius - smaller initial size
+      const waveThickness = 0.03 + (i * 0.01); // Wave thickness
       
       // Create wave ring geometry
       const waveGeo = new THREE.RingGeometry(
@@ -1635,7 +1638,7 @@ class App {
       const waveMat = new THREE.MeshBasicMaterial({
         color: new THREE.Color().setHSL(0.6, 0.8, 0.3 + i * 0.1), // Blue-green colors
         transparent: true,
-        opacity: 0.6 - i * 0.1,
+        opacity: 0.8 - i * 0.15, // Higher initial opacity
         side: THREE.DoubleSide
       });
       
@@ -1650,16 +1653,16 @@ class App {
       
       waveGroup.add(wave);
       
-      // Add wave to explosion effects for animation
+      // Add wave to explosion effects for animation - start immediately
       this.explosionEffects.push({
         group: waveGroup,
         wave: wave,
-        lifetime: 4.0 + i * 0.5,
-        maxLifetime: 4.0 + i * 0.5,
-        startTime: Date.now() + waveDelay * 1000,
+        lifetime: 3.0 + i * 0.3, // Shorter lifetime
+        maxLifetime: 3.0 + i * 0.3,
+        startTime: Date.now(), // Start immediately
         maxRadius: maxWaveRadius,
         currentRadius: waveRadius,
-        expansionSpeed: 0.5 + i * 0.1,
+        expansionSpeed: 0.8 + i * 0.2, // Faster expansion
         isWave: true
       });
     }
@@ -1818,10 +1821,15 @@ class App {
         const progress = 1 - (effect.lifetime / effect.maxLifetime);
         
         // Expand wave outward
-        effect.currentRadius += effect.expansionSpeed * 0.02 * this.simSpeed;
+        effect.currentRadius += effect.expansionSpeed * 0.05 * this.simSpeed; // Faster expansion
+        
+        // Debug: log wave expansion occasionally
+        if (Math.random() < 0.01) {
+          console.log(`Wave expanding: radius ${effect.currentRadius.toFixed(3)}, max ${effect.maxRadius.toFixed(3)}`);
+        }
         
         // Update wave geometry with new radius
-        const waveThickness = 0.05 + (effect.currentRadius * 0.02);
+        const waveThickness = 0.03 + (effect.currentRadius * 0.01);
         const newWaveGeo = new THREE.RingGeometry(
           effect.currentRadius,
           effect.currentRadius + waveThickness,
@@ -1834,12 +1842,12 @@ class App {
         
         // Fade wave out as it expands
         const fadeProgress = Math.min(1, effect.currentRadius / effect.maxRadius);
-        effect.wave.material.opacity = (0.6 - fadeProgress * 0.6) * (1 - progress);
+        effect.wave.material.opacity = (0.8 - fadeProgress * 0.4) * (1 - progress * 0.5);
         
-        // Change wave color as it expands (blue to white)
-        const hue = 0.6 - fadeProgress * 0.2; // Blue to cyan
-        const saturation = 0.8 - fadeProgress * 0.3;
-        const lightness = 0.3 + fadeProgress * 0.4;
+        // Change wave color as it expands (blue to cyan to white)
+        const hue = 0.6 - fadeProgress * 0.3; // Blue to cyan
+        const saturation = 0.8 - fadeProgress * 0.4;
+        const lightness = 0.3 + fadeProgress * 0.5;
         effect.wave.material.color.setHSL(hue, saturation, lightness);
         
         // Remove wave if it has expanded too far or lifetime expired
