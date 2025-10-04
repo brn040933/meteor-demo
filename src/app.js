@@ -1535,13 +1535,14 @@ class App {
     const meteorSizeFactor = Math.max(0.5, Math.min(3.0, Math.log10(meteorSize + 1) / 2));
     const baseRadius = Math.max(0.1, Math.min(2.0, Math.pow(kilotons, 0.3) * 0.5 * meteorSizeFactor));
     
-    // Create dome geometry
-    const domeGeo = new THREE.SphereGeometry(baseRadius, 16, 8, 0, Math.PI * 2, 0, Math.PI / 2);
+    // Create wave-like dome geometry with ocean colors
+    const domeGeo = new THREE.SphereGeometry(baseRadius, 32, 16, 0, Math.PI * 2, 0, Math.PI / 2);
     const domeMat = new THREE.MeshBasicMaterial({
-      color: 0xff4400,
+      color: new THREE.Color().setHSL(0.55, 0.9, 0.4), // Deep ocean blue
       transparent: true,
-      opacity: 0.8,
-      side: THREE.DoubleSide
+      opacity: 0.9,
+      side: THREE.DoubleSide,
+      alphaTest: 0.1
     });
     const dome = new THREE.Mesh(domeGeo, domeMat);
     explosionGroup.add(dome);
@@ -1549,8 +1550,8 @@ class App {
     // Create wave-like explosion effect
     this.createWaveExplosion(position, energy, meteorSize);
     
-    // Create fire particles
-    const particleCount = Math.min(100, Math.max(20, kilotons * 10));
+    // Create water-like explosion particles
+    const particleCount = Math.min(150, Math.max(30, kilotons * 15));
     const particles = new THREE.BufferGeometry();
     const positions = new Float32Array(particleCount * 3);
     const velocities = new Float32Array(particleCount * 3);
@@ -1558,21 +1559,28 @@ class App {
     
     for (let i = 0; i < particleCount; i++) {
       const i3 = i * 3;
-      // Random position within dome
+      // Random position within dome - more concentrated at center
       const angle = Math.random() * Math.PI * 2;
-      const height = Math.random() * baseRadius;
-      const radius = Math.random() * baseRadius * 0.8;
+      const height = Math.random() * baseRadius * 0.5;
+      const radius = Math.random() * baseRadius * 0.6;
       
       positions[i3] = Math.cos(angle) * radius;
       positions[i3 + 1] = height;
       positions[i3 + 2] = Math.sin(angle) * radius;
       
-      // Random velocity
-      velocities[i3] = (Math.random() - 0.5) * 0.1;
-      velocities[i3 + 1] = Math.random() * 0.2 + 0.1;
-      velocities[i3 + 2] = (Math.random() - 0.5) * 0.1;
+      // Water-like velocity (outward and upward)
+      const speed = 0.05 + Math.random() * 0.1;
+      const direction = new THREE.Vector3(
+        (Math.random() - 0.5) * 1.5,
+        Math.random() * 0.8 + 0.2,
+        (Math.random() - 0.5) * 1.5
+      ).normalize();
       
-      lifetimes[i] = Math.random() * 2 + 1;
+      velocities[i3] = direction.x * speed;
+      velocities[i3 + 1] = direction.y * speed;
+      velocities[i3 + 2] = direction.z * speed;
+      
+      lifetimes[i] = 2.0 + Math.random() * 3.0; // Longer lifetime for water
     }
     
     particles.setAttribute('position', new THREE.BufferAttribute(positions, 3));
@@ -1580,10 +1588,10 @@ class App {
     particles.setAttribute('lifetime', new THREE.BufferAttribute(lifetimes, 1));
     
     const particleMat = new THREE.PointsMaterial({
-      color: 0xff6600,
-      size: 0.05,
+      color: 0x88ccff, // Light blue water color
+      size: 0.02,
       transparent: true,
-      opacity: 0.8,
+      opacity: 0.9,
       blending: THREE.AdditiveBlending
     });
     
@@ -1841,23 +1849,29 @@ class App {
       const effect = this.explosionEffects[i];
       effect.lifetime -= 0.02 * this.simSpeed;
       
-      // Update dome explosion
+      // Update dome explosion with wave-like behavior
       if (effect.dome) {
         const progress = 1 - (effect.lifetime / effect.maxLifetime);
         
-        // Scale dome up over time
-        const scale = 1 + progress * 2;
+        // Scale dome up over time like a wave expanding
+        const scale = 1 + progress * 3; // More dramatic scaling
         effect.dome.scale.setScalar(scale);
         
-        // Fade dome out
-        effect.dome.material.opacity = (1 - progress) * 0.8;
+        // Wave-like opacity changes
+        const waveOpacity = (1 - progress) * 0.9 * (0.8 + 0.2 * Math.sin(progress * Math.PI * 4));
+        effect.dome.material.opacity = waveOpacity;
         
-        // Update dome color (red to orange to yellow)
-        const hue = 0.1 - progress * 0.1; // Red to yellow
-        effect.dome.material.color.setHSL(hue, 1, 0.5);
+        // Ocean color transition: deep blue -> turquoise -> light blue
+        const hue = 0.55 - progress * 0.2; // Deep blue to turquoise
+        const saturation = 0.9 - progress * 0.3;
+        const lightness = 0.4 + progress * 0.3;
+        effect.dome.material.color.setHSL(hue, saturation, lightness);
         
-        // Rotate with Earth's rotation (simplified)
-        effect.dome.rotation.y += 0.001 * this.simSpeed;
+        // Add wave-like rotation and oscillation
+        const time = Date.now() * 0.001;
+        effect.dome.rotation.y += 0.002 * this.simSpeed;
+        effect.dome.rotation.x = Math.sin(time * 2) * 0.05;
+        effect.dome.rotation.z = Math.cos(time * 1.5) * 0.03;
       }
       
       // Update mushroom cloud
@@ -1967,7 +1981,7 @@ class App {
         effect.particles.material.opacity = (1 - progress) * 0.8;
       }
       
-      // Update regular particles
+      // Update regular particles with water-like behavior
       if (effect.particles && !effect.isWaterSplash) {
         const positions = effect.particles.geometry.attributes.position.array;
         const velocities = effect.particles.geometry.attributes.velocity.array;
@@ -1983,16 +1997,22 @@ class App {
           const particleIndex = j / 3;
           lifetimes[particleIndex] -= 0.02 * this.simSpeed;
           
-          // Add gravity to particles
-          velocities[j + 1] -= 0.01 * this.simSpeed; // Gravity
+          // Water-like physics: stronger gravity and some turbulence
+          velocities[j + 1] -= 0.015 * this.simSpeed; // Stronger gravity for water
+          
+          // Add water turbulence
+          const time = Date.now() * 0.001;
+          velocities[j] += Math.sin(time * 3 + j) * 0.001;
+          velocities[j + 2] += Math.cos(time * 2 + j) * 0.001;
         }
         
         effect.particles.geometry.attributes.position.needsUpdate = true;
         effect.particles.geometry.attributes.lifetime.needsUpdate = true;
         
-        // Fade particles
+        // Water-like particle fading
         const progress = 1 - (effect.lifetime / effect.maxLifetime);
-        effect.particles.material.opacity = (1 - progress) * 0.8;
+        const waterOpacity = (1 - progress) * 0.9 * (0.7 + 0.3 * Math.sin(progress * Math.PI * 3));
+        effect.particles.material.opacity = waterOpacity;
       }
       
       // Remove if expired
